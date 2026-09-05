@@ -1,0 +1,126 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AuthProvider {
+  GOOGLE
+  CREDENTIALS
+}
+
+enum UserRole {
+  STUDENT
+  ADMIN
+}
+
+enum ExamTrack {
+  NEET
+  IIT_JEE
+  NDA
+  NONE
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum AnswerSource {
+  LIBRARY
+  AI
+}
+
+enum PlanStatus {
+  NONE
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum SubscriptionStatus {
+  CREATED
+  ACTIVE
+  FAILED
+  CANCELLED
+}
+
+model User {
+  id           String       @id @default(cuid())
+  name         String
+  email        String       @unique
+  passwordHash String?
+  image        String?
+  provider     AuthProvider
+  role         UserRole     @default(STUDENT)
+  grade        Int?
+  examTrack    ExamTrack    @default(NONE)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  planStatus       PlanStatus @default(NONE)
+  planCode         String?
+  planExpiresAt    DateTime?
+  questionsUsed    Int        @default(0)
+  usagePeriodStart DateTime?
+
+  resetTokenHash      String?   @unique
+  resetTokenExpiresAt DateTime?
+
+  chats         Chat[]
+  subscriptions Subscription[]
+
+  @@index([role, createdAt])
+  @@index([grade])
+  @@index([planStatus, planExpiresAt])
+}
+
+model Subscription {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  planCode    String
+  amountPaise Int
+
+  razorpaySubscriptionId String? @unique
+  razorpayPaymentId      String? @unique
+
+  status             SubscriptionStatus @default(CREATED)
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, createdAt])
+}
+
+model Chat {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String    @default("New chat")
+  subject   String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  messages  Message[]
+
+  @@index([userId, updatedAt])
+}
+
+model Message {
+  id        String        @id @default(cuid())
+  chatId    String
+  chat      Chat          @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  role      MessageRole
+  content   String        @db.Text
+  source    AnswerSource?
+  createdAt DateTime      @default(now())
+
+  @@index([chatId, createdAt])
+}
