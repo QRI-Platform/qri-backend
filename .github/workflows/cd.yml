@@ -1,0 +1,64 @@
+name: CD Pipeline
+
+on:
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types: [completed]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: self-hosted
+    env:
+      DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+      DOCKER_IMAGE_NAME: ${{ secrets.DOCKER_IMAGE_NAME }}
+      GROQ_API_KEY: ${{ vars.GROQ_API_KEY }}
+      PINECONE_API_KEY: ${{ vars.PINECONE_API_KEY }}
+      POSTGRES_SQL_URL: ${{ vars.POSTGRES_SQL_URL }}
+      HF_TOKEN: ${{ vars.HF_TOKEN }}
+      LANGFUSE_SECRET_KEY: ${{ vars.LANGFUSE_SECRET_KEY }}
+      LANGFUSE_PUBLIC_KEY: ${{ vars.LANGFUSE_PUBLIC_KEY }}
+      LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
+      LANGFUSE_HOST: ${{ vars.LANGFUSE_HOST }}
+      OTEL_TELEMETRY_ENABLED: ${{ vars.OTEL_TELEMETRY_ENABLED }}
+      OTEL_SERVICE_NAME: ${{ vars.OTEL_SERVICE_NAME }}
+      OTEL_SERVICE_VERSION: ${{ vars.OTEL_SERVICE_VERSION }}
+      OTEL_RESOURCE_ATTRIBUTES: ${{ vars.OTEL_RESOURCE_ATTRIBUTES }}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT }}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ vars.OTEL_EXPORTER_OTLP_PROTOCOL }}
+      OTEL_EXPORTER_OTLP_HEADERS: ${{ vars.OTEL_EXPORTER_OTLP_HEADERS }}
+      OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: ${{ vars.OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED }}
+
+    steps:
+      - name: Pull Docker image
+        run: sudo docker pull "${DOCKER_USERNAME}/${DOCKER_IMAGE_NAME}:latest"
+
+      - name: Delete Old docker container
+        run: |
+          sudo docker rm -f "${DOCKER_IMAGE_NAME}-container" || true
+          sudo docker network inspect "qri-network" >/dev/null 2>&1 || sudo docker network create "qri-network"
+
+      - name: Run Docker Container
+        run: |
+          sudo docker run -d \
+            --name "${DOCKER_IMAGE_NAME}-container" \
+            --network "qri-network" \
+            --env "GROQ_API_KEY=${GROQ_API_KEY}" \
+            --env "PINECONE_API_KEY=${PINECONE_API_KEY}" \
+            --env "POSTGRES_SQL_URL=${POSTGRES_SQL_URL}" \
+            --env "HF_TOKEN=${HF_TOKEN}" \
+            --env "LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}" \
+            --env "LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}" \
+            --env "LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL}" \
+            --env "LANGFUSE_HOST=${LANGFUSE_HOST}" \
+            --env "OTEL_TELEMETRY_ENABLED=${OTEL_TELEMETRY_ENABLED}" \
+            --env "OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME}" \
+            --env "OTEL_SERVICE_VERSION=${OTEL_SERVICE_VERSION}" \
+            --env "OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES}" \
+            --env "OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT}" \
+            --env "OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL}" \
+            --env "OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS}" \
+            --env "OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED=${OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED}" \
+            "${DOCKER_USERNAME}/${DOCKER_IMAGE_NAME}:latest"

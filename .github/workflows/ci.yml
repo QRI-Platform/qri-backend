@@ -1,0 +1,26 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+      DOCKER_IMAGE_NAME: ${{ secrets.DOCKER_IMAGE_NAME }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker login
+        run: echo "${DOCKER_PASSWORD}" | docker login -u "${DOCKER_USERNAME}" --password-stdin
+
+      - name: Build the Docker image
+        run: docker build -t "${DOCKER_USERNAME}/${DOCKER_IMAGE_NAME}:latest" .
+
+      - name: Push to Docker Hub
+        run: docker push "${DOCKER_USERNAME}/${DOCKER_IMAGE_NAME}:latest"
