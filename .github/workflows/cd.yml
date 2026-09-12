@@ -14,23 +14,20 @@ jobs:
       DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
       DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
       DOCKER_IMAGE_NAME: ${{ secrets.DOCKER_IMAGE_NAME }}
-      GROQ_API_KEY: ${{ vars.GROQ_API_KEY }}
-      PINECONE_API_KEY: ${{ vars.PINECONE_API_KEY }}
-      POSTGRES_SQL_URL: ${{ vars.POSTGRES_SQL_URL }}
-      HF_TOKEN: ${{ vars.HF_TOKEN }}
-      LANGFUSE_SECRET_KEY: ${{ vars.LANGFUSE_SECRET_KEY }}
-      LANGFUSE_PUBLIC_KEY: ${{ vars.LANGFUSE_PUBLIC_KEY }}
-      LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
-      LANGFUSE_HOST: ${{ vars.LANGFUSE_HOST }}
-      OTEL_TELEMETRY_ENABLED: ${{ vars.OTEL_TELEMETRY_ENABLED }}
-      OTEL_SERVICE_NAME: ${{ vars.OTEL_SERVICE_NAME }}
-      OTEL_SERVICE_VERSION: ${{ vars.OTEL_SERVICE_VERSION }}
-      OTEL_RESOURCE_ATTRIBUTES: ${{ vars.OTEL_RESOURCE_ATTRIBUTES }}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT }}
-      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ vars.OTEL_EXPORTER_OTLP_PROTOCOL }}
-      OTEL_EXPORTER_OTLP_HEADERS: ${{ vars.OTEL_EXPORTER_OTLP_HEADERS }}
-      OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: ${{ vars.OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED }}
-
+      DATABASE_URL: ${{ vars.DATABASE_URL }}
+      PORT: ${{ vars.PORT }}
+      NODE_ENV: ${{ vars.NODE_ENV }}
+      WEB_ORIGIN: ${{ vars.WEB_ORIGIN }}
+      AUTH_SECRET: ${{ vars.AUTH_SECRET }}
+      AI_SERVICE_URL: ${{ vars.AI_SERVICE_URL }}
+      RAZORPAY_KEY_ID: ${{ vars.RAZORPAY_KEY_ID }}
+      RAZORPAY_KEY_SECRET: ${{ vars.RAZORPAY_KEY_SECRET }}
+      RAZORPAY_WEBHOOK_SECRET: ${{ vars.RAZORPAY_WEBHOOK_SECRET }}
+      RAZORPAY_EARLY_BIRD_PLAN_ID: ${{ vars.RAZORPAY_EARLY_BIRD_PLAN_ID }}
+      RESEND_API_KEY: ${{ vars.RESEND_API_KEY }}
+      EMAIL_FROM: ${{ vars.EMAIL_FROM }}
+      APP_URL: ${{ vars.APP_URL }}
+  
     steps:
       - name: Pull Docker image
         run: sudo docker pull "${DOCKER_USERNAME}/${DOCKER_IMAGE_NAME}:latest"
@@ -45,20 +42,18 @@ jobs:
           sudo docker run -d \
             --name "${DOCKER_IMAGE_NAME}-container" \
             --network "qri-network" \
-            --env "GROQ_API_KEY=${GROQ_API_KEY}" \
-            --env "PINECONE_API_KEY=${PINECONE_API_KEY}" \
-            --env "POSTGRES_SQL_URL=${POSTGRES_SQL_URL}" \
-            --env "HF_TOKEN=${HF_TOKEN}" \
-            --env "LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}" \
-            --env "LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}" \
-            --env "LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL}" \
-            --env "LANGFUSE_HOST=${LANGFUSE_HOST}" \
-            --env "OTEL_TELEMETRY_ENABLED=${OTEL_TELEMETRY_ENABLED}" \
-            --env "OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME}" \
-            --env "OTEL_SERVICE_VERSION=${OTEL_SERVICE_VERSION}" \
-            --env "OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES}" \
-            --env "OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT}" \
-            --env "OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL}" \
-            --env "OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS}" \
-            --env "OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED=${OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED}" \
+            -p ${PORT}:${PORT} \
+            --env "DATABASE_URL=${DATABASE_URL}" \
+            --env "PORT=${PORT}" \
+            --env "NODE_ENV=${NODE_ENV}" \
+            --env "WEB_ORIGIN=${WEB_ORIGIN}" \
+            --env "AUTH_SECRET=${AUTH_SECRET}" \
+            --env "AI_SERVICE_URL=${AI_SERVICE_URL}" \
+            --env "RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID}" \
+            --env "RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET}" \
+            --env "RAZORPAY_WEBHOOK_SECRET=${RAZORPAY_WEBHOOK_SECRET}" \
+            --env "RAZORPAY_EARLY_BIRD_PLAN_ID=${RAZORPAY_EARLY_BIRD_PLAN_ID}" \
+            --env "RESEND_API_KEY=${RESEND_API_KEY}" \
+            --env "EMAIL_FROM=${EMAIL_FROM}" \
+            --env "APP_URL=${APP_URL}" \
             "${DOCKER_USERNAME}/${DOCKER_IMAGE_NAME}:latest"
