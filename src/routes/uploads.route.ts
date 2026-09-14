@@ -173,10 +173,28 @@ uploadsRouter.post(
       const body = await response.text().catch(() => "");
       console.log(`Ingest ok: ${files.length} file(s), response: ${body.slice(0, 300)}`);
 
+      const uploadedMessages = await prisma.$transaction(async (tx) => {
+        const messages = await Promise.all(
+          files.map((file) =>
+            tx.message.create({
+              data: {
+                chatId: id,
+                role: "SYSTEM",
+                content: `user uploaded document: ${file.originalname}`,
+              },
+            }),
+          ),
+        );
+
+        await tx.chat.update({ where: { id }, data: { updatedAt: new Date() } });
+        return messages;
+      });
+
       res.status(201).json({
         ok: true,
         data: {
           files: files.map((f) => ({ name: f.originalname, size: f.size })),
+          messages: uploadedMessages,
         },
       });
     } catch (err) {
