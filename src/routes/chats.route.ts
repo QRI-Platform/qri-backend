@@ -66,6 +66,84 @@ chatsRouter.get("/:id", async (req, res) => {
   res.json({ ok: true, data: { chat } });
 });
 
+const generatedTitleSchema = z.object({
+  title: z.string().trim().min(1).max(80),
+});
+
+async function callAiMaintenance(
+  path: string,
+  userId: string,
+  threadId: string,
+  method: "GET" | "DELETE" = "GET",
+): Promise<Response | null> {
+  if (!env.AI_SERVICE_URL) return null;
+
+  const url = new URL(path, env.AI_SERVICE_URL);
+  url.searchParams.set("user_id", userId);
+  url.searchParams.set("thread_id", threadId);
+
+  try {
+    return await fetch(url.toString(), {
+      method,
+      headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    console.error(`AI maintenance request failed for ${path}:`, error);
+    return null;
+  }
+}
+
+async function generateChatTitle(userId: string, threadId: string): Promise<string | null> {
+  const response = await callAiMaintenance("/api/v1/graph/chat_rename", userId, threadId);
+  if (!response?.ok) return null;
+
+  try {
+    const body = (await response.json()) as { data?: unknown };
+    const parsed = generatedTitleSchema.safeParse(body.data);
+    return parsed.success ? parsed.data.title : null;
+  } catch (error) {
+    console.error("Could not parse generated chat title:", error);
+    return null;
+  }
+}
+
+async function deleteAiThreadData(userId: string, threadId: string) {
+  await Promise.allSettled([
+    callAiMaintenance("/api/v1/user/conversation", userId, threadId, "DELETE"),
+    callAiMaintenance("/api/v1/user/pine_cone", userId, threadId, "DELETE"),
+  ]);
+}
+
+chatsRouter.patch("/:id/title", async (req, res) => {
+  const userId = req.user!.sub;
+  const { id } = req.params as { id: string };
+  const parsed = generatedTitleSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      ok: false,
+      error: { code: "BAD_REQUEST", message: "A title between 1 and 80 characters is required" },
+    });
+  }
+
+  const chat = await prisma.chat.findFirst({ where: { id, userId } });
+  if (!chat) {
+    return res.status(404).json({
+      ok: false,
+      error: { code: "NOT_FOUND", message: "Chat not found" },
+    });
+  }
+
+  const updatedChat = await prisma.chat.update({
+    where: { id },
+    data: { title: parsed.data.title },
+    select: { id: true, title: true },
+  });
+
+  res.json({ ok: true, data: { chat: updatedChat } });
+});
+
 
 /**
  * Defensive cleanup for a known fault on the AI service's side.
@@ -485,6 +563,8 @@ chatsRouter.post("/:id/messages/stream", requireActivePlan, askLimiter, async (r
     });
   }
 
+  const isFirstMessage = (await prisma.message.count({ where: { chatId: id } })) === 0;
+
   const userMessage = await prisma.message.create({
     data: { chatId: id, role: "USER", content: parsed.data.content },
   });
@@ -533,6 +613,15 @@ chatsRouter.post("/:id/messages/stream", requireActivePlan, askLimiter, async (r
     return created;
   });
 
+  let title: string | undefined;
+  if (isFirstMessage && reply.ok && chat.title === "New chat") {
+    const generatedTitle = await generateChatTitle(userId, id);
+    if (generatedTitle) {
+      await prisma.chat.update({ where: { id }, data: { title: generatedTitle } });
+      title = generatedTitle;
+    }
+  }
+
   /**
    * The final text is sent even though tokens were already streamed.
    * They aren't the same thing - the tokens are raw model output, the
@@ -544,6 +633,7 @@ chatsRouter.post("/:id/messages/stream", requireActivePlan, askLimiter, async (r
     ok: reply.ok,
     assistantMessageId: assistantMessage.id,
     content: reply.text,
+    ...(title ? { title } : {}),
   });
 
   res.end();
@@ -564,6 +654,7 @@ chatsRouter.delete("/:id", async (req, res) => {
     });
   }
 
+  await deleteAiThreadData(userId, id);
   await prisma.chat.delete({ where: { id } });
 
   res.json({ ok: true, data: { deleted: true } });
