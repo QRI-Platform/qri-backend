@@ -16,6 +16,9 @@ const registerSchema = z.object({
   name: z.string().min(1),
   email: z.string().email(),
   password: z.string().min(8),
+  grade: z.number().int().min(6).max(12),
+  examTrack: z.enum(["NEET", "IIT_JEE", "NDA", "NONE"]).default("NONE"),
+
 });
 
 authRouter.post("/register", registerLimiter, async (req, res) => {
@@ -27,7 +30,7 @@ authRouter.post("/register", registerLimiter, async (req, res) => {
     });
   }
 
-  const { name, email, password } = parsed.data;
+  const { name, email, password, grade, examTrack } = parsed.data;
 
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
@@ -39,7 +42,7 @@ authRouter.post("/register", registerLimiter, async (req, res) => {
 
   const passwordHash = await hashPassword(password);
   const user = await prisma.user.create({
-    data: { name, email, passwordHash, provider: "CREDENTIALS" },
+    data: { name, email, passwordHash, provider: "CREDENTIALS", grade, examTrack },
   });
 
   const token = signToken({ sub: user.id, email: user.email, role: user.role });
