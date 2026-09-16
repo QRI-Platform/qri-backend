@@ -18,10 +18,10 @@ export interface Plan {
   questionLimit: number;
   /** Length of one billing period, in days. */
   durationDays: number;
-   /**
+  /**
    * Razorpay's own plan id, created by hand in their dashboard - their
    * Subscriptions API needs a plan to exist on their side before anyone
-   * can subscribe to it. Filled in once the account exists.
+   * can subscribe to it.
    */
   razorpayPlanId?: string;
 }
@@ -69,3 +69,24 @@ export const PLAN_ORDER = ["early_bird", "starter", "popular", "pro"];
 
 /** Highlighted on the pricing page as the suggested choice. */
 export const RECOMMENDED_PLAN_CODE = "popular";
+
+/**
+ * Fallback only. Used by the webhook when a subscription's notes don't
+ * carry a planCode - which shouldn't happen, but would for anything
+ * created before plan selection existed. Not "the plan we sell"; there
+ * are four of those now.
+ */
+export const CURRENT_PLAN_CODE = "early_bird";
+
+export function getPlan(code: string): Plan | null {
+  return PLANS[code] ?? null;
+}
+
+export function isValidPlanCode(code: string): boolean {
+  return code in PLANS;
+}
+
+/** Rupees, for display - derived so the two can never drift apart. */
+export function formatRupees(amountPaise: number): string {
+  return `₹${(amountPaise / 100).toFixed(0)}`;
+}
