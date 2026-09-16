@@ -30,25 +30,42 @@ export const PLANS: Record<string, Plan> = {
   early_bird: {
     code: "early_bird",
     name: "Early Bird",
-    amountPaise: 900,
+    amountPaise: 900, // Rs 9
     questionLimit: 150,
     durationDays: 30,
     razorpayPlanId: process.env.RAZORPAY_EARLY_BIRD_PLAN_ID,
   },
+  starter: {
+    code: "starter",
+    name: "Starter",
+    amountPaise: 9900, // Rs 99
+    questionLimit: 500,
+    durationDays: 30,
+    razorpayPlanId: process.env.RAZORPAY_STARTER_PLAN_ID,
+  },
+  popular: {
+    code: "popular",
+    name: "Popular",
+    amountPaise: 14900, // Rs 149
+    questionLimit: 1000,
+    durationDays: 30,
+    razorpayPlanId: process.env.RAZORPAY_POPULAR_PLAN_ID,
+  },
+  pro: {
+    code: "pro",
+    name: "Pro",
+    amountPaise: 19900, // Rs 199
+    questionLimit: 1400,
+    durationDays: 30,
+    razorpayPlanId: process.env.RAZORPAY_PRO_PLAN_ID,
+  },
 };
 
-/** The plan new students are offered right now. */
-export const CURRENT_PLAN_CODE = "early_bird";
+/**
+ * The order plans appear on the pricing page. Kept here rather than in
+ * the page so the catalogue stays the single source of truth.
+ */
+export const PLAN_ORDER = ["early_bird", "starter", "popular", "pro"];
 
-export function getPlan(code: string): Plan | null {
-  return PLANS[code] ?? null;
-}
-
-export function isValidPlanCode(code: string): boolean {
-  return code in PLANS;
-}
-
-/** Rupees, for display - derived so the two can never drift apart. */
-export function formatRupees(amountPaise: number): string {
-  return `Rs ${(amountPaise / 100).toFixed(0)}`;
-}
+/** Highlighted on the pricing page as the suggested choice. */
+export const RECOMMENDED_PLAN_CODE = "popular";
