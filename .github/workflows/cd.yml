@@ -27,6 +27,9 @@ jobs:
       RESEND_API_KEY: ${{ vars.RESEND_API_KEY }}
       EMAIL_FROM: ${{ vars.EMAIL_FROM }}
       APP_URL: ${{ vars.APP_URL }}
+      RAZORPAY_STARTER_PLAN_ID: ${{ vars.RAZORPAY_STARTER_PLAN_ID }}
+      RAZORPAY_POPULAR_PLAN_ID: ${{ vars.RAZORPAY_POPULAR_PLAN_ID }}
+      RAZORPAY_PRO_PLAN_ID: ${{ vars.RAZORPAY_PRO_PLAN_ID }}
   
     steps:
       - name: Pull Docker image
@@ -56,4 +59,7 @@ jobs:
             --env "RESEND_API_KEY=${RESEND_API_KEY}" \
             --env "EMAIL_FROM=${EMAIL_FROM}" \
             --env "APP_URL=${APP_URL}" \
+            --env "RAZORPAY_STARTER_PLAN_ID=${RAZORPAY_STARTER_PLAN_ID}" \
+            --env "RAZORPAY_POPULAR_PLAN_ID=${RAZORPAY_POPULAR_PLAN_ID}" \
+            --env "RAZORPAY_PRO_PLAN_ID=${RAZORPAY_PRO_PLAN_ID}" \
             "${DOCKER_USERNAME}/${DOCKER_IMAGE_NAME}:latest"
