@@ -1,8 +1,15 @@
 import { Router } from "express";
+import { z } from "zod";
 import { prisma } from "../db/prisma";
 import { requireAuth } from "../middleware/auth";
 import { getRazorpay, isValidWebhookSignature } from "../lib/razorpay";
-import { getPlan, CURRENT_PLAN_CODE } from "../config/plans";
+import {
+  getPlan,
+  isValidPlanCode,
+  CURRENT_PLAN_CODE,
+  PLAN_ORDER,
+  RECOMMENDED_PLAN_CODE,
+} from "../config/plans";
 import { env } from "../config/env";
 
 export const paymentsRouter = Router();
@@ -12,6 +19,32 @@ function addDays(date: Date, days: number): Date {
   result.setDate(result.getDate() + days);
   return result;
 }
+
+/**
+ * GET /api/payments/plans
+ *
+ * The pricing page reads this instead of hardcoding plans, so adding or
+ * repricing a plan means changing one file on the server. No auth - the
+ * prices aren't secret.
+ */
+paymentsRouter.get("/plans", (_req, res) => {
+  const plans = PLAN_ORDER.map((code) => getPlan(code))
+    .filter((plan): plan is NonNullable<typeof plan> => plan !== null)
+    .map((plan) => ({
+      code: plan.code,
+      name: plan.name,
+      amountPaise: plan.amountPaise,
+      questionLimit: plan.questionLimit,
+      durationDays: plan.durationDays,
+      recommended: plan.code === RECOMMENDED_PLAN_CODE,
+    }));
+
+  res.json({ ok: true, data: { plans } });
+});
+
+const subscribeSchema = z.object({
+  planCode: z.string().min(1),
+});
 
 /**
  * POST /api/payments/subscribe
@@ -36,12 +69,25 @@ paymentsRouter.post("/subscribe", requireAuth, async (req, res) => {
     });
   }
 
-  const plan = getPlan(CURRENT_PLAN_CODE);
+  /**
+   * The plan code is checked against the catalogue, not trusted from
+   * the request. Without this, anyone could post an invented code and
+   * the lookup would decide what they get.
+   */
+  const parsed = subscribeSchema.safeParse(req.body);
+  if (!parsed.success || !isValidPlanCode(parsed.data.planCode)) {
+    return res.status(400).json({
+      ok: false,
+      error: { code: "BAD_REQUEST", message: "Choose a valid plan." },
+    });
+  }
+
+  const plan = getPlan(parsed.data.planCode);
   if (!plan?.razorpayPlanId) {
-    console.error(`Plan "${CURRENT_PLAN_CODE}" has no razorpayPlanId configured`);
+    console.error(`Plan "${parsed.data.planCode}" has no razorpayPlanId configured`);
     return res.status(503).json({
       ok: false,
-      error: { code: "PAYMENTS_UNAVAILABLE", message: "Payments aren't set up yet." },
+      error: { code: "PAYMENTS_UNAVAILABLE", message: "That plan isn't available right now." },
     });
   }
 
@@ -140,7 +186,9 @@ paymentsRouter.post("/webhook", async (req, res) => {
 
   if (!isValidWebhookSignature(rawBody, signature)) {
     console.error("Rejected a webhook with an invalid signature");
-    return res.status(401).json({ ok: false, error: { code: "INVALID_SIGNATURE", message: "Invalid" } });
+    return res
+      .status(401)
+      .json({ ok: false, error: { code: "INVALID_SIGNATURE", message: "Invalid" } });
   }
 
   const event = req.body as RazorpayWebhookEvent;
@@ -206,12 +254,10 @@ paymentsRouter.post("/webhook", async (req, res) => {
        * paid for the current period, so they keep it until
        * planExpiresAt, which requireActivePlan already enforces.
        */
-      await prisma.$transaction([
-        prisma.subscription.updateMany({
-          where: { razorpaySubscriptionId: subscriptionId },
-          data: { status: "CANCELLED" },
-        }),
-      ]);
+      await prisma.subscription.updateMany({
+        where: { razorpaySubscriptionId: subscriptionId },
+        data: { status: "CANCELLED" },
+      });
 
       return res.json({ ok: true, data: { handled: true } });
     }

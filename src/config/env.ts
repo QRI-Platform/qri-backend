@@ -16,6 +16,10 @@ const schema = z.object({
   AI_SERVICE_URL: z.string().optional(),
 
   RAZORPAY_KEY_ID: z.string().optional(),
+  RAZORPAY_EARLY_BIRD_PLAN_ID: z.string().optional(),
+  RAZORPAY_STARTER_PLAN_ID: z.string().optional(),
+  RAZORPAY_POPULAR_PLAN_ID: z.string().optional(),
+  RAZORPAY_PRO_PLAN_ID: z.string().optional(),
   RAZORPAY_KEY_SECRET: z.string().optional(),
   RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
 

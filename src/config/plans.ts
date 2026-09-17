@@ -18,10 +18,10 @@ export interface Plan {
   questionLimit: number;
   /** Length of one billing period, in days. */
   durationDays: number;
-   /**
+  /**
    * Razorpay's own plan id, created by hand in their dashboard - their
    * Subscriptions API needs a plan to exist on their side before anyone
-   * can subscribe to it. Filled in once the account exists.
+   * can subscribe to it.
    */
   razorpayPlanId?: string;
 }
@@ -30,14 +30,52 @@ export const PLANS: Record<string, Plan> = {
   early_bird: {
     code: "early_bird",
     name: "Early Bird",
-    amountPaise: 900,
+    amountPaise: 900, // Rs 9
     questionLimit: 150,
     durationDays: 30,
     razorpayPlanId: process.env.RAZORPAY_EARLY_BIRD_PLAN_ID,
   },
+  starter: {
+    code: "starter",
+    name: "Starter",
+    amountPaise: 9900, // Rs 99
+    questionLimit: 500,
+    durationDays: 30,
+    razorpayPlanId: process.env.RAZORPAY_STARTER_PLAN_ID,
+  },
+  popular: {
+    code: "popular",
+    name: "Popular",
+    amountPaise: 14900, // Rs 149
+    questionLimit: 1000,
+    durationDays: 30,
+    razorpayPlanId: process.env.RAZORPAY_POPULAR_PLAN_ID,
+  },
+  pro: {
+    code: "pro",
+    name: "Pro",
+    amountPaise: 19900, // Rs 199
+    questionLimit: 1400,
+    durationDays: 30,
+    razorpayPlanId: process.env.RAZORPAY_PRO_PLAN_ID,
+  },
 };
 
-/** The plan new students are offered right now. */
+/**
+ * The order plans appear on the pricing page. Kept here rather than in
+ * the page so the catalogue stays the single source of truth.
+ */
+export const PLAN_ORDER = ["early_bird", "starter", "popular", "pro"];
+
+/** Highlighted on the pricing page as the suggested choice. */
+export const RECOMMENDED_PLAN_CODE = "popular";
+
+/**
+ * Fallback only. Used by the webhook when a subscription's notes don't
+ * carry a planCode - which shouldn't happen, but would for anything
+ * created before plan selection existed. Not "the plan we sell"; there
+ * are four of those now.
+ */
 export const CURRENT_PLAN_CODE = "early_bird";
 
 export function getPlan(code: string): Plan | null {
@@ -50,5 +88,5 @@ export function isValidPlanCode(code: string): boolean {
 
 /** Rupees, for display - derived so the two can never drift apart. */
 export function formatRupees(amountPaise: number): string {
-  return `Rs ${(amountPaise / 100).toFixed(0)}`;
+  return `₹${(amountPaise / 100).toFixed(0)}`;
 }
