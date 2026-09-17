@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../db/prisma";
 import { requireAuth } from "../middleware/auth";
-import { getPlan } from "../config/plans";
+import { getPlan, formatRupees } from "../config/plans";
 
 export const usersRouter = Router();
 
@@ -35,6 +35,9 @@ usersRouter.get("/me", async (req, res) => {
       grade: true,
       examTrack: true,
       image: true,
+      schoolName: true,
+      city: true,
+      phone: true,
       createdAt: true,
       planStatus: true,
       planCode: true,
@@ -68,12 +71,16 @@ usersRouter.get("/me", async (req, res) => {
         grade: user.grade,
         examTrack: user.examTrack,
         image: user.image,
+        schoolName: user.schoolName,
+        city: user.city,
+        phone: user.phone,
         createdAt: user.createdAt,
       },
       plan: {
         status: isAdmin ? "EXEMPT" : user.planStatus,
         code: user.planCode,
         name: plan?.name ?? null,
+        price: plan ? formatRupees(plan.amountPaise) : null,
         expiresAt: user.planExpiresAt,
         questionsUsed: isAdmin ? 0 : user.questionsUsed,
         questionLimit: isAdmin ? null : (plan?.questionLimit ?? null),
@@ -90,6 +97,9 @@ const updateProfileSchema = z.object({
   name: z.string().min(1).optional(),
   grade: z.number().int().min(6).max(12).optional(),
   examTrack: z.enum(["NEET", "IIT_JEE", "NDA", "NONE"]).optional(),
+  schoolName: z.string().max(120).nullable().optional(),
+  city: z.string().max(80).nullable().optional(),
+  phone: z.string().max(20).nullable().optional(),
 });
 
 /**
@@ -130,7 +140,9 @@ usersRouter.patch("/me", async (req, res) => {
         role: user.role,
         grade: user.grade,
         examTrack: user.examTrack,
-      },
+        schoolName: user.schoolName,
+        city: user.city,
+        phone: user.phone,      },
     },
   });
 });
