@@ -211,9 +211,15 @@ model QuizQuestion {
   // The choices, in the order shown.
   options String[]
 
-  // Index into options. NEVER included in any response before the quiz
+    // Index into options. NEVER included in any response before the quiz
   // is submitted.
   correctOption Int
+
+  // Their generator returns a worked solution with every question.
+  // Shown on the result screen - "why was this right" is the part that
+  // actually teaches.
+  explanation String? @db.Text
+  hint        String? @db.Text
 
   // What the student picked. Null until they answer.
   selectedOption Int?
