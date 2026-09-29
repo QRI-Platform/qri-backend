@@ -68,17 +68,22 @@ export function difficultyForLevel(level: number): string {
 }
 
 /**
- * Badges are awarded every ten levels.
+ * Badges are awarded at these level counts.
+ *
+ * Front-loaded on purpose: the first badge at level 5 rather than 10.
+ * Ten levels is a hundred questions, all passed at 80% or better -
+ * too far for a first reward, and a student who quits before earning
+ * anything was never motivated by the badges at all.
  *
  * Deliberately derived from the highest level reached rather than
  * stored: a stored badge can drift out of step with actual progress,
  * and there's nothing here a calculation can't answer.
  */
 export const BADGE_TIERS = [
-  { minLevel: 10, code: "noob", name: "Noob" },
-  { minLevel: 20, code: "rookie", name: "Rookie" },
-  { minLevel: 30, code: "warrior", name: "Warrior" },
-  { minLevel: 40, code: "master", name: "Master" },
+  { minLevel: 5, code: "noob", name: "Noob" },
+  { minLevel: 15, code: "rookie", name: "Rookie" },
+  { minLevel: 25, code: "warrior", name: "Warrior" },
+  { minLevel: 35, code: "master", name: "Master" },
   { minLevel: 50, code: "prime_master", name: "Prime Master" },
 ];
 

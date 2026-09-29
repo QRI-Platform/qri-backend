@@ -4,7 +4,7 @@ import { requireAuth } from "../middleware/auth";
 import { requireActivePlan } from "../middleware/plan";
 import { requireValidSubject } from "../middleware/game";
 import { z } from "zod";
-import { difficultyForLevel, QUESTIONS_PER_LEVEL } from "../config/subjects";
+import { BADGE_TIERS, difficultyForLevel, QUESTIONS_PER_LEVEL } from "../config/subjects";
 import { generateQuestions } from "../lib/quiz-generator";
 import { PASS_PERCENTAGE } from "../config/subjects";
 import {
@@ -126,7 +126,8 @@ gameRouter.get("/levels/:subject", requireValidSubject, async (req, res) => {
       isCurrent: level === currentLevel,
       accuracyPercent: bestByLevel.get(level) ?? null,
       // Badge milestones, marked every tenth level.
-      badgeAtThisLevel: level % 10 === 0,
+      // Marks where a badge is earned, so the map can show milestones.
+      badgeAtThisLevel: BADGE_TIERS.some((tier) => tier.minLevel === level),    
     };
   });
 
@@ -410,11 +411,11 @@ gameRouter.post("/submit/:attemptId", async (req, res) => {
   ]);
 
   /**
-   * A badge is earned only when this attempt is what pushed the count
-   * onto a multiple of ten - so replaying level 10 doesn't re-award it.
+   * A badge is earned only when this attempt is what crossed a tier -
+   * so replaying level 5 doesn't award Noob again.
    */
   const badgeUnlocked =
-    unlocksNewLevel && newLevelsCompleted % 10 === 0
+    unlocksNewLevel && BADGE_TIERS.some((tier) => tier.minLevel === newLevelsCompleted)
       ? highestBadge(newLevelsCompleted)
       : null;
 
@@ -443,6 +444,103 @@ gameRouter.post("/submit/:attemptId", async (req, res) => {
         isCorrect,
         explanation: question.explanation,
       })),
+    },
+  });
+});
+/**
+ * GET /api/game/progress
+ *
+ * Everything the dashboard needs about practice: per-subject standing,
+ * overall totals, and the badge shelf.
+ */
+gameRouter.get("/progress", async (req, res) => {
+  const userId = req.user!.sub;
+  const grade = req.student?.grade ?? null;
+
+  const available = subjectsForGrade(grade);
+
+  const progressRows = await prisma.gameProgress.findMany({
+    where: { userId },
+    select: {
+      subject: true,
+      levelsCompleted: true,
+      totalCorrect: true,
+      totalAnswered: true,
+      lastPlayedAt: true,
+    },
+  });
+
+  const progressBySubject = new Map(progressRows.map((row) => [row.subject, row]));
+
+  const subjects = available.map((subject) => {
+    const progress = progressBySubject.get(subject.code);
+    const levelsCompleted = progress?.levelsCompleted ?? 0;
+
+    return {
+      code: subject.code,
+      name: subject.name,
+      levelsCompleted,
+      totalLevels: TOTAL_LEVELS,
+      currentLevel: Math.min(levelsCompleted + 1, TOTAL_LEVELS),
+      accuracyPercent: accuracy(progress?.totalCorrect ?? 0, progress?.totalAnswered ?? 0),
+      highestBadge: highestBadge(levelsCompleted),
+      lastPlayedAt: progress?.lastPlayedAt ?? null,
+    };
+  });
+
+  /**
+   * The shelf shows five slots, not one badge per subject. Eleven
+   * subjects times five tiers would be fifty-five badges, which reads
+   * as wallpaper rather than achievement.
+   *
+   * Instead each tier carries a count: "Warrior x3" says more than
+   * three separate Warrior badges would, and rewards breadth across
+   * subjects rather than just depth in one.
+   */
+  const badgeShelf = BADGE_TIERS.map((tier) => ({
+    code: tier.code,
+    name: tier.name,
+    minLevel: tier.minLevel,
+    // How many subjects have reached this tier.
+    earnedInSubjects: subjects.filter((s) => s.levelsCompleted >= tier.minLevel).length,
+  }));
+
+  // The best tier reached in any subject - one line for "where am I".
+  const bestLevelsCompleted = subjects.reduce(
+    (max, s) => Math.max(max, s.levelsCompleted),
+    0,
+  );
+
+  const totalCorrect = progressRows.reduce((sum, row) => sum + row.totalCorrect, 0);
+  const totalAnswered = progressRows.reduce((sum, row) => sum + row.totalAnswered, 0);
+
+  /**
+   * The most recently played subject, for "continue where you left
+   * off". Null for a student who hasn't started.
+   */
+  const lastPlayed = [...progressRows]
+    .sort((a, b) => b.lastPlayedAt.getTime() - a.lastPlayedAt.getTime())[0];
+
+  res.json({
+    ok: true,
+    data: {
+      subjects,
+      overall: {
+        levelsCompleted: subjects.reduce((sum, s) => sum + s.levelsCompleted, 0),
+        // Total available across every subject this class offers.
+        totalLevels: available.length * TOTAL_LEVELS,
+        accuracyPercent: accuracy(totalCorrect, totalAnswered),
+        questionsAnswered: totalAnswered,
+        highestBadge: highestBadge(bestLevelsCompleted),
+      },
+      badgeShelf,
+      continuePlaying: lastPlayed
+        ? {
+            subject: lastPlayed.subject,
+            name: getSubject(lastPlayed.subject)?.name ?? lastPlayed.subject,
+            nextLevel: Math.min(lastPlayed.levelsCompleted + 1, TOTAL_LEVELS),
+          }
+        : null,
     },
   });
 });
