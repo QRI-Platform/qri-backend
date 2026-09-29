@@ -3,6 +3,9 @@ import { prisma } from "../db/prisma";
 import { requireAuth } from "../middleware/auth";
 import { requireActivePlan } from "../middleware/plan";
 import { requireValidSubject } from "../middleware/game";
+import { z } from "zod";
+import { difficultyForLevel, QUESTIONS_PER_LEVEL } from "../config/subjects";
+import { generateQuestions } from "../lib/quiz-generator";
 import {
   subjectsForGrade,
   getSubject,
@@ -136,6 +139,138 @@ gameRouter.get("/levels/:subject", requireValidSubject, async (req, res) => {
       accuracyPercent: accuracy(progress?.totalCorrect ?? 0, progress?.totalAnswered ?? 0),
       badges: badgesForProgress(levelsCompleted),
       levels,
+    },
+  });
+});
+const startSchema = z.object({
+  level: z.number().int().min(1).max(TOTAL_LEVELS),
+});
+
+/**
+ * POST /api/game/start/:subject
+ *
+ * Prepares a quiz for one level and returns the questions - **without
+ * the correct answers**. Those stay in the database and are only used
+ * when the attempt is submitted. Sending them to the browser would make
+ * every level and badge meaningless, since they'd be readable from the
+ * page.
+ */
+gameRouter.post("/start/:subject", requireValidSubject, async (req, res) => {
+  const userId = req.user!.sub;
+  const { subjectCode, examTrack } = req.gameContext!;
+
+  const parsed = startSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      ok: false,
+      error: { code: "BAD_REQUEST", message: "A valid level is required." },
+    });
+  }
+
+  const { level } = parsed.data;
+
+  const progress = await prisma.gameProgress.findUnique({
+    where: { userId_subject: { userId, subject: subjectCode } },
+    select: { levelsCompleted: true },
+  });
+  const levelsCompleted = progress?.levelsCompleted ?? 0;
+
+  /**
+   * Checked on the server, not just hidden in the level map. Without
+   * this a student could post level 50 straight away and collect every
+   * badge without playing.
+   */
+  if (level > levelsCompleted + 1) {
+    return res.status(403).json({
+      ok: false,
+      error: { code: "LEVEL_LOCKED", message: "Finish the earlier levels first." },
+    });
+  }
+
+  /**
+   * If they already have this level open, hand back the same questions
+   * rather than generating new ones. A refresh mid-quiz shouldn't lose
+   * their place, and regenerating would cost another AI call.
+   */
+  const existing = await prisma.quizAttempt.findFirst({
+    where: { userId, subject: subjectCode, level, status: "IN_PROGRESS" },
+    include: { questions: { orderBy: { position: "asc" } } },
+  });
+
+  if (existing && existing.questions.length > 0) {
+    return res.json({
+      ok: true,
+      data: {
+        attemptId: existing.id,
+        level: existing.level,
+        resumed: true,
+        questions: existing.questions.map((q) => ({
+          id: q.id,
+          position: q.position,
+          questionText: q.questionText,
+          options: q.options,
+          selectedOption: q.selectedOption,
+        })),
+      },
+    });
+  }
+
+  const difficulty = difficultyForLevel(level);
+
+  // Deliberately outside any transaction - this can take a while, and
+  // holding a database transaction open across a network call is a
+  // rule we don't break.
+  const generated = await generateQuestions({
+    subject: subjectCode,
+    difficulty,
+    count: QUESTIONS_PER_LEVEL,
+    examTrack,
+    userId,
+  });
+
+  if (!generated.ok) {
+    return res.status(502).json({
+      ok: false,
+      error: { code: "GENERATION_FAILED", message: generated.error ?? "Couldn't prepare the questions." },
+    });
+  }
+
+  const attempt = await prisma.quizAttempt.create({
+    data: {
+      userId,
+      subject: subjectCode,
+      level,
+      difficulty,
+      totalQuestions: generated.questions.length,
+      questions: {
+        create: generated.questions.map((q, index) => ({
+          position: index,
+          questionText: q.questionText,
+          options: q.options,
+          correctOption: q.correctOption,
+          explanation: q.explanation,
+          hint: q.hint,
+        })),
+      },
+    },
+    include: { questions: { orderBy: { position: "asc" } } },
+  });
+
+  res.status(201).json({
+    ok: true,
+    data: {
+      attemptId: attempt.id,
+      level: attempt.level,
+      resumed: false,
+      // Note what's absent: correctOption and explanation. Neither
+      // leaves the server until the attempt is submitted.
+      questions: attempt.questions.map((q) => ({
+        id: q.id,
+        position: q.position,
+        questionText: q.questionText,
+        options: q.options,
+        selectedOption: null,
+      })),
     },
   });
 });
