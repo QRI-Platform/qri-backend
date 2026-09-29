@@ -6,6 +6,7 @@ import { requireValidSubject } from "../middleware/game";
 import { z } from "zod";
 import { difficultyForLevel, QUESTIONS_PER_LEVEL } from "../config/subjects";
 import { generateQuestions } from "../lib/quiz-generator";
+import { PASS_PERCENTAGE } from "../config/subjects";
 import {
   subjectsForGrade,
   getSubject,
@@ -270,6 +271,177 @@ gameRouter.post("/start/:subject", requireValidSubject, async (req, res) => {
         questionText: q.questionText,
         options: q.options,
         selectedOption: null,
+      })),
+    },
+  });
+});
+const submitSchema = z.object({
+  answers: z
+    .array(
+      z.object({
+        questionId: z.string().min(1),
+        // Null means skipped - a student can submit without answering
+        // everything, and a skipped question counts as wrong.
+        selectedOption: z.number().int().min(0).nullable(),
+      }),
+    )
+    .min(1),
+});
+
+/**
+ * POST /api/game/submit/:attemptId
+ *
+ * Grades an attempt against the answers stored when it started.
+ *
+ * Nothing the browser sends is trusted beyond which option was picked.
+ * The correct answers, the score, and whether the level passed are all
+ * decided here - a client that could report its own score would make
+ * the whole system pointless.
+ */
+gameRouter.post("/submit/:attemptId", async (req, res) => {
+  const userId = req.user!.sub;
+  const { attemptId } = req.params as { attemptId: string };
+
+  const parsed = submitSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      ok: false,
+      error: { code: "BAD_REQUEST", message: "Answers are required." },
+    });
+  }
+
+  const attempt = await prisma.quizAttempt.findUnique({
+    where: { id: attemptId },
+    include: { questions: { orderBy: { position: "asc" } } },
+  });
+
+  // Same 404 whether it doesn't exist or belongs to someone else.
+  if (!attempt || attempt.userId !== userId) {
+    return res.status(404).json({
+      ok: false,
+      error: { code: "NOT_FOUND", message: "Attempt not found" },
+    });
+  }
+
+  if (attempt.status !== "IN_PROGRESS") {
+    return res.status(400).json({
+      ok: false,
+      error: { code: "ALREADY_SUBMITTED", message: "This quiz has already been submitted." },
+    });
+  }
+
+  // Look answers up by id rather than trusting the order they arrive in.
+  const selectedByQuestion = new Map(
+    parsed.data.answers.map((a) => [a.questionId, a.selectedOption]),
+  );
+
+  let score = 0;
+  const graded = attempt.questions.map((question) => {
+    const selected = selectedByQuestion.get(question.id) ?? null;
+    // An unanswered question is wrong, not ignored - otherwise skipping
+    // everything but one correct answer would score 100%.
+    const isCorrect = selected !== null && selected === question.correctOption;
+    if (isCorrect) score += 1;
+
+    return { question, selected, isCorrect };
+  });
+
+  const totalQuestions = attempt.questions.length;
+  const accuracyPercent = Math.round((score / totalQuestions) * 100);
+  const passed = accuracyPercent >= PASS_PERCENTAGE;
+
+  const existingProgress = await prisma.gameProgress.findUnique({
+    where: { userId_subject: { userId, subject: attempt.subject } },
+    select: { levelsCompleted: true },
+  });
+  const levelsCompleted = existingProgress?.levelsCompleted ?? 0;
+
+  /**
+   * Only a newly cleared level advances the count. Replaying level 3
+   * after reaching 5 shouldn't push anything forward, and passing the
+   * same level twice shouldn't count twice.
+   */
+  const unlocksNewLevel = passed && attempt.level === levelsCompleted + 1;
+  const newLevelsCompleted = unlocksNewLevel ? attempt.level : levelsCompleted;
+
+  const now = new Date();
+
+  /**
+   * Everything lands together. A half-written result - graded questions
+   * but no progress update, or the reverse - would leave a student's
+   * record permanently inconsistent.
+   */
+  await prisma.$transaction([
+    ...graded.map(({ question, selected, isCorrect }) =>
+      prisma.quizQuestion.update({
+        where: { id: question.id },
+        data: { selectedOption: selected, isCorrect },
+      }),
+    ),
+    prisma.quizAttempt.update({
+      where: { id: attempt.id },
+      data: {
+        status: "COMPLETED",
+        score,
+        accuracyPercent,
+        passed,
+        submittedAt: now,
+      },
+    }),
+    prisma.gameProgress.upsert({
+      where: { userId_subject: { userId, subject: attempt.subject } },
+      // Running totals across every attempt, including replays - this
+      // is lifetime accuracy in the subject, not just this level's.
+      update: {
+        levelsCompleted: newLevelsCompleted,
+        totalCorrect: { increment: score },
+        totalAnswered: { increment: totalQuestions },
+        lastPlayedAt: now,
+      },
+      create: {
+        userId,
+        subject: attempt.subject,
+        levelsCompleted: newLevelsCompleted,
+        totalCorrect: score,
+        totalAnswered: totalQuestions,
+        lastPlayedAt: now,
+      },
+    }),
+  ]);
+
+  /**
+   * A badge is earned only when this attempt is what pushed the count
+   * onto a multiple of ten - so replaying level 10 doesn't re-award it.
+   */
+  const badgeUnlocked =
+    unlocksNewLevel && newLevelsCompleted % 10 === 0
+      ? highestBadge(newLevelsCompleted)
+      : null;
+
+  res.json({
+    ok: true,
+    data: {
+      score,
+      totalQuestions,
+      accuracyPercent,
+      passed,
+      passMark: PASS_PERCENTAGE,
+      levelsCompleted: newLevelsCompleted,
+      unlockedNextLevel: unlocksNewLevel && newLevelsCompleted < TOTAL_LEVELS,
+      badgeUnlocked,
+      /**
+       * The correct answers and explanations are only included now, on
+       * the way out. Until submission they never leave the server.
+       */
+      questions: graded.map(({ question, selected, isCorrect }) => ({
+        id: question.id,
+        position: question.position,
+        questionText: question.questionText,
+        options: question.options,
+        selectedOption: selected,
+        correctOption: question.correctOption,
+        isCorrect,
+        explanation: question.explanation,
       })),
     },
   });
