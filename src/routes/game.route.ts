@@ -544,3 +544,87 @@ gameRouter.get("/progress", async (req, res) => {
     },
   });
 });
+
+/**
+ * GET /api/game/attempt/:attemptId
+ *
+ * A completed attempt's full result.
+ *
+ * The submit response already carries this, but the result page lives
+ * at its own URL - so a refresh, or a link shared with a parent, would
+ * otherwise show nothing.
+ */
+gameRouter.get("/attempt/:attemptId", async (req, res) => {
+  const userId = req.user!.sub;
+  const { attemptId } = req.params as { attemptId: string };
+
+  const attempt = await prisma.quizAttempt.findUnique({
+    where: { id: attemptId },
+    include: { questions: { orderBy: { position: "asc" } } },
+  });
+
+  // Same 404 whether it doesn't exist or belongs to someone else.
+  if (!attempt || attempt.userId !== userId) {
+    return res.status(404).json({
+      ok: false,
+      error: { code: "NOT_FOUND", message: "Attempt not found" },
+    });
+  }
+
+  /**
+   * An unfinished attempt would mean handing over the correct answers
+   * before they've been earned - the one thing this whole design
+   * exists to prevent.
+   */
+  if (attempt.status !== "COMPLETED") {
+    return res.status(400).json({
+      ok: false,
+      error: { code: "NOT_COMPLETED", message: "This quiz hasn't been submitted yet." },
+    });
+  }
+
+  const subject = getSubject(attempt.subject);
+
+  const progress = await prisma.gameProgress.findUnique({
+    where: { userId_subject: { userId, subject: attempt.subject } },
+    select: { levelsCompleted: true },
+  });
+  const levelsCompleted = progress?.levelsCompleted ?? 0;
+
+  /**
+   * Recomputed rather than stored: a badge is shown as unlocked only
+   * if this attempt is the one that cleared the tier.
+   */
+  const badgeUnlocked =
+    attempt.passed && BADGE_TIERS.some((tier) => tier.minLevel === attempt.level)
+      ? highestBadge(attempt.level)
+      : null;
+
+  res.json({
+    ok: true,
+    data: {
+      attemptId: attempt.id,
+      subject: { code: attempt.subject, name: subject?.name ?? attempt.subject },
+      level: attempt.level,
+      score: attempt.score ?? 0,
+      totalQuestions: attempt.totalQuestions,
+      accuracyPercent: attempt.accuracyPercent ?? 0,
+      passed: attempt.passed ?? false,
+      passMark: PASS_PERCENTAGE,
+      levelsCompleted,
+      nextLevel: attempt.level < TOTAL_LEVELS ? attempt.level + 1 : null,
+      unlockedNextLevel: (attempt.passed ?? false) && attempt.level === levelsCompleted,
+      badgeUnlocked,
+      questions: attempt.questions.map((q) => ({
+        id: q.id,
+        position: q.position,
+        questionText: q.questionText,
+        options: q.options,
+        selectedOption: q.selectedOption,
+        correctOption: q.correctOption,
+        isCorrect: q.isCorrect ?? false,
+        explanation: q.explanation,
+      })),
+    },
+  });
+}); 
