@@ -76,6 +76,8 @@ model User {
 
   chats         Chat[]
   subscriptions Subscription[]
+  gameProgress  GameProgress[]
+  quizAttempts  QuizAttempt[]
 
   @@index([role, createdAt])
   @@index([grade])
@@ -126,4 +128,102 @@ model Message {
   createdAt DateTime      @default(now())
 
   @@index([chatId, createdAt])
+}
+enum QuizStatus {
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
+}
+
+// A student's standing in one subject.
+//
+// Duplicates what could be counted from QuizAttempt, on purpose: the
+// level map and the dashboard read this constantly, and it must be one
+// cheap lookup rather than an aggregation over every attempt ever made.
+model GameProgress {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // A code from config/subjects.ts, not a display name.
+  subject String
+
+  // Highest level passed. 0 means nothing cleared yet, so level 1 is
+  // the one unlocked.
+  levelsCompleted Int @default(0)
+
+  // Running totals, used for the accuracy shown on cards.
+  totalCorrect  Int @default(0)
+  totalAnswered Int @default(0)
+
+  lastPlayedAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // One row per student per subject - nothing else makes sense, and
+  // this prevents a race creating two.
+  @@unique([userId, subject])
+  // For the dashboard's "continue where you left off".
+  @@index([userId, lastPlayedAt])
+}
+
+// One attempt at one level.
+//
+// The correct answers live here and in QuizQuestion, never in anything
+// sent to the browser. A student who could read them from the page
+// would make every badge meaningless.
+model QuizAttempt {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  subject String
+  level   Int
+  // The band sent to the AI developer, kept for later analysis.
+  difficulty String
+
+  status QuizStatus @default(IN_PROGRESS)
+
+  // Filled on submission. Null while still in progress.
+  score           Int?
+  totalQuestions  Int
+  accuracyPercent Int?
+  passed          Boolean?
+
+  startedAt   DateTime  @default(now())
+  submittedAt DateTime?
+
+  questions QuizQuestion[]
+
+  @@index([userId, subject, level])
+  @@index([userId, startedAt])
+}
+
+model QuizQuestion {
+  id        String      @id @default(cuid())
+  attemptId String
+  attempt   QuizAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  // Position in the quiz, so order survives a reload.
+  position Int
+
+  questionText String @db.Text
+  // The choices, in the order shown.
+  options String[]
+
+    // Index into options. NEVER included in any response before the quiz
+  // is submitted.
+  correctOption Int
+
+  // Their generator returns a worked solution with every question.
+  // Shown on the result screen - "why was this right" is the part that
+  // actually teaches.
+  explanation String? @db.Text
+  hint        String? @db.Text
+
+  // What the student picked. Null until they answer.
+  selectedOption Int?
+  isCorrect      Boolean?
+
+  @@index([attemptId, position])
 }

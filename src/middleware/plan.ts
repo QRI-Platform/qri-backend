@@ -75,7 +75,21 @@ export async function requireActivePlan(req: Request, res: Response, next: NextF
     });
   }
 
-  if (user.planExpiresAt && user.planExpiresAt <= now) {
+  const plan = getPlan(user.planCode ?? "");
+  if (!plan) {
+    console.error(`Unknown planCode "${user.planCode}" on user ${userId}`);
+    return res.status(500).json({
+      ok: false,
+      error: { code: "INTERNAL", message: "Something went wrong" },
+    });
+  }
+
+  /**
+   * Expiry applies to subscriptions only. A trial has no end date - it
+   * runs out by being used up, not by time passing - and its nominal
+   * duration is a placeholder that should never expire anyone.
+   */
+  if (!plan.isTrial && user.planExpiresAt && user.planExpiresAt <= now) {
     await prisma.user.update({ where: { id: userId }, data: { planStatus: "EXPIRED" } });
     return res.status(402).json({
       ok: false,
@@ -86,34 +100,48 @@ export async function requireActivePlan(req: Request, res: Response, next: NextF
     });
   }
 
-  const plan = getPlan(user.planCode ?? "");
-  if (!plan) {
-    console.error(`Unknown planCode "${user.planCode}" on user ${userId}`);
-    return res.status(500).json({
-      ok: false,
-      error: { code: "INTERNAL", message: "Something went wrong" },
-    });
-  }
-
   let questionsUsed = user.questionsUsed;
-  const periodStart = user.usagePeriodStart ?? now;
-  const periodEnd = addDays(periodStart, plan.durationDays);
 
   /**
-   * Roll the period over lazily, on request, rather than relying only on
-   * Razorpay's renewal webhook firing on time. If that webhook is delayed
-   * or missed, a paid-up student would otherwise sit at their old limit
-   * with no way out. This self-corrects.
+   * Paid plans roll their usage period over lazily, on request, rather
+   * than relying only on Razorpay's renewal webhook firing on time. If
+   * that webhook is delayed or missed, a paid-up student would
+   * otherwise sit at their old limit with no way out. This
+   * self-corrects.
+   *
+   * A trial is deliberately excluded: it's a one-time allowance, not a
+   * subscription. Rolling it over would hand out fifty free questions
+   * every month, forever.
    */
-  if (now >= periodEnd) {
-    questionsUsed = 0;
-    await prisma.user.update({
-      where: { id: userId },
-      data: { questionsUsed: 0, usagePeriodStart: now },
-    });
+  if (!plan.isTrial) {
+    const periodStart = user.usagePeriodStart ?? now;
+    const periodEnd = addDays(periodStart, plan.durationDays);
+
+    if (now >= periodEnd) {
+      questionsUsed = 0;
+      await prisma.user.update({
+        where: { id: userId },
+        data: { questionsUsed: 0, usagePeriodStart: now },
+      });
+    }
   }
 
   if (questionsUsed >= plan.questionLimit) {
+    /**
+     * A trial ends for good, so pointing at a reset date would be a
+     * lie. The frontend tells these two apart by the code, and shows
+     * the plans rather than a "come back later" message.
+     */
+    if (plan.isTrial) {
+      return res.status(403).json({
+        ok: false,
+        error: {
+          code: "TRIAL_ENDED",
+          message: "You've used all your free questions. Choose a plan to keep going.",
+        },
+      });
+    }
+
     const resetsAt = addDays(user.usagePeriodStart ?? now, plan.durationDays);
     return res.status(403).json({
       ok: false,

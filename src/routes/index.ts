@@ -6,6 +6,8 @@ import { chatsRouter } from "./chats.route";
 import { adminRouter } from "./admin.route";
 import { uploadsRouter } from "./uploads.route";
 import { paymentsRouter } from "./payments.route";
+import { gameRouter } from "./game.route";
+
 
 export const apiRouter = Router();
 
@@ -18,3 +20,4 @@ apiRouter.use("/chats", uploadsRouter);
 apiRouter.use("/chats", chatsRouter);
 apiRouter.use("/admin", adminRouter);
 apiRouter.use("/payments", paymentsRouter);
+apiRouter.use("/game", gameRouter);
