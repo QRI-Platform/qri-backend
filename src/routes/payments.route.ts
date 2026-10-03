@@ -5,7 +5,7 @@ import { requireAuth } from "../middleware/auth";
 import { getRazorpay, isValidWebhookSignature } from "../lib/razorpay";
 import {
   getPlan,
-  isValidPlanCode,
+  isPurchasablePlan,
   CURRENT_PLAN_CODE,
   PLAN_ORDER,
   RECOMMENDED_PLAN_CODE,
@@ -26,6 +26,10 @@ function addDays(date: Date, days: number): Date {
  * The pricing page reads this instead of hardcoding plans, so adding or
  * repricing a plan means changing one file on the server. No auth - the
  * prices aren't secret.
+ *
+ * Only returns purchasable plans. The free trial isn't chosen by
+ * anyone, and the retired Rs 9 plan still exists for the people who
+ * bought it but is no longer on sale.
  */
 paymentsRouter.get("/plans", (_req, res) => {
   const plans = PLAN_ORDER.map((code) => getPlan(code))
@@ -51,7 +55,7 @@ const subscribeSchema = z.object({
  *
  * Creates a Razorpay subscription and returns what the browser needs to
  * open their checkout. Deliberately NOT behind requireActivePlan - the
- * whole point is that the student doesn't have a plan yet.
+ * whole point is that the student is either on a trial or has nothing.
  *
  * Nothing here marks the student as paid. That only happens when
  * Razorpay confirms the money actually moved, via the webhook below.
@@ -70,12 +74,13 @@ paymentsRouter.post("/subscribe", requireAuth, async (req, res) => {
   }
 
   /**
-   * The plan code is checked against the catalogue, not trusted from
-   * the request. Without this, anyone could post an invented code and
-   * the lookup would decide what they get.
+   * Checked against the purchasable list, not just the catalogue.
+   * Validating only that the code exists would let someone post
+   * "free_trial" or the retired "early_bird" and get a plan that isn't
+   * on sale.
    */
   const parsed = subscribeSchema.safeParse(req.body);
-  if (!parsed.success || !isValidPlanCode(parsed.data.planCode)) {
+  if (!parsed.success || !isPurchasablePlan(parsed.data.planCode)) {
     return res.status(400).json({
       ok: false,
       error: { code: "BAD_REQUEST", message: "Choose a valid plan." },
@@ -93,10 +98,19 @@ paymentsRouter.post("/subscribe", requireAuth, async (req, res) => {
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { planStatus: true, email: true, name: true },
+    select: { planStatus: true, planCode: true, email: true, name: true },
   });
 
-  if (user?.planStatus === "ACTIVE") {
+  /**
+   * A trial counts as ACTIVE, but upgrading from one is the entire
+   * point - so only a real subscription blocks this. Checking
+   * planStatus alone would leave every trial user unable to pay, which
+   * is the one thing this flow exists to let them do.
+   */
+  const currentPlan = getPlan(user?.planCode ?? "");
+  const onPaidPlan = user?.planStatus === "ACTIVE" && currentPlan !== null && !currentPlan.isTrial;
+
+  if (onPaidPlan) {
     return res.status(400).json({
       ok: false,
       error: { code: "ALREADY_SUBSCRIBED", message: "You already have an active plan." },
@@ -212,6 +226,10 @@ paymentsRouter.post("/webhook", async (req, res) => {
      * every renewal, so this one handler covers both. It's also the
      * point at which the question allowance resets - a new billing
      * period has genuinely begun.
+     *
+     * This is also what replaces a free trial: planCode, the expiry
+     * date and the counter are all overwritten, so nothing separate is
+     * needed to end the trial.
      */
     if (eventType === "subscription.charged") {
       const planCode = subscriptionEntity?.notes?.planCode ?? CURRENT_PLAN_CODE;
