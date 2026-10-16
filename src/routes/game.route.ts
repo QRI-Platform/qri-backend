@@ -7,6 +7,7 @@ import { z } from "zod";
 import { BADGE_TIERS, difficultyForLevel, QUESTIONS_PER_LEVEL } from "../config/subjects";
 import { generateQuestions } from "../lib/quiz-generator";
 import { PASS_PERCENTAGE } from "../config/subjects";
+import { getPlan, formatRupees } from "../config/plans";
 import {
   subjectsForGrade,
   getSubject,
@@ -628,3 +629,158 @@ gameRouter.get("/attempt/:attemptId", async (req, res) => {
     },
   });
 }); 
+/**
+ * GET /api/game/dashboard
+ *
+ * Everything the dashboard needs, in one request.
+ *
+ * It could be assembled from /users/me and /game/progress, but two
+ * calls means the page renders twice - half the data, then the rest -
+ * which flickers, and costs two round-trips on a phone.
+ *
+ * Lives on the game router because most of it is practice data, and
+ * requireActivePlan is already applied here.
+ */
+gameRouter.get("/dashboard", async (req, res) => {
+  const userId = req.user!.sub;
+  const grade = req.student?.grade ?? null;
+
+  /**
+   * Run together rather than one after another. Three sequential
+   * queries to Singapore would be three times the latency for no
+   * reason - none of them depends on the others.
+   */
+  const [user, progressRows, recentChats] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        name: true,
+        role: true,
+        grade: true,
+        examTrack: true,
+        planStatus: true,
+        planCode: true,
+        questionsUsed: true,
+      },
+    }),
+    prisma.gameProgress.findMany({
+      where: { userId },
+      select: {
+        subject: true,
+        levelsCompleted: true,
+        totalCorrect: true,
+        totalAnswered: true,
+        lastPlayedAt: true,
+      },
+    }),
+    prisma.chat.findMany({
+      where: { userId },
+      orderBy: { updatedAt: "desc" },
+      take: 3,
+      select: { id: true, title: true, updatedAt: true },
+    }),
+  ]);
+
+  if (!user) {
+    return res.status(401).json({
+      ok: false,
+      error: { code: "UNAUTHORIZED", message: "Not authenticated" },
+    });
+  }
+
+  const plan = getPlan(user.planCode ?? "");
+  const isAdmin = user.role === "ADMIN";
+  const isTrial = plan?.isTrial === true;
+
+  const available = subjectsForGrade(grade);
+  const progressBySubject = new Map(progressRows.map((row) => [row.subject, row]));
+
+  const subjects = available.map((subject) => {
+    const progress = progressBySubject.get(subject.code);
+    const levelsCompleted = progress?.levelsCompleted ?? 0;
+
+    return {
+      code: subject.code,
+      name: subject.name,
+      levelsCompleted,
+      totalLevels: TOTAL_LEVELS,
+      currentLevel: Math.min(levelsCompleted + 1, TOTAL_LEVELS),
+      accuracyPercent: accuracy(progress?.totalCorrect ?? 0, progress?.totalAnswered ?? 0),
+      highestBadge: highestBadge(levelsCompleted),
+      lastPlayedAt: progress?.lastPlayedAt ?? null,
+    };
+  });
+
+  const badgeShelf = BADGE_TIERS.map((tier) => ({
+    code: tier.code,
+    name: tier.name,
+    minLevel: tier.minLevel,
+    earnedInSubjects: subjects.filter((s) => s.levelsCompleted >= tier.minLevel).length,
+  }));
+
+  const bestLevelsCompleted = subjects.reduce((max, s) => Math.max(max, s.levelsCompleted), 0);
+  const totalCorrect = progressRows.reduce((sum, row) => sum + row.totalCorrect, 0);
+  const totalAnswered = progressRows.reduce((sum, row) => sum + row.totalAnswered, 0);
+
+  const lastPlayed = [...progressRows].sort(
+    (a, b) => b.lastPlayedAt.getTime() - a.lastPlayedAt.getTime(),
+  )[0];
+
+  /**
+   * Only three subjects are returned for the cards - all eleven would
+   * make the dashboard a second subject-select page. The ones already
+   * started come first; the rest fill in behind them, so a new student
+   * still sees somewhere to begin.
+   */
+  const featuredSubjects = [...subjects]
+    .sort((a, b) => {
+      if (a.levelsCompleted !== b.levelsCompleted) return b.levelsCompleted - a.levelsCompleted;
+      return (b.lastPlayedAt?.getTime() ?? 0) - (a.lastPlayedAt?.getTime() ?? 0);
+    })
+    .slice(0, 3);
+
+  res.json({
+    ok: true,
+    data: {
+      student: {
+        name: user.name,
+        grade: user.grade,
+        examTrack: user.examTrack,
+      },
+      plan: {
+        status: isAdmin ? "EXEMPT" : user.planStatus,
+        name: isAdmin ? null : (plan?.name ?? null),
+        isTrial,
+        /**
+         * Same rule as the profile page: a trial's usage is never
+         * reported. Showing a countdown turns a free trial into a
+         * reason to ask fewer questions.
+         */
+        price: isTrial || isAdmin || !plan ? null : formatRupees(plan.amountPaise),
+        questionsUsed: isAdmin || isTrial ? null : user.questionsUsed,
+        questionLimit: isAdmin || isTrial ? null : (plan?.questionLimit ?? null),
+      },
+      practice: {
+        featuredSubjects,
+        totalSubjects: subjects.length,
+        levelsCompleted: subjects.reduce((sum, s) => sum + s.levelsCompleted, 0),
+        totalLevels: available.length * TOTAL_LEVELS,
+        accuracyPercent: accuracy(totalCorrect, totalAnswered),
+        badgeShelf,
+        highestBadge: highestBadge(bestLevelsCompleted),
+        continuePlaying: lastPlayed
+          ? {
+              subject: lastPlayed.subject,
+              name: getSubject(lastPlayed.subject)?.name ?? lastPlayed.subject,
+              nextLevel: Math.min(lastPlayed.levelsCompleted + 1, TOTAL_LEVELS),
+            }
+          : null,
+      },
+      recentChats: recentChats.map((chat) => ({
+        id: chat.id,
+        title: chat.title,
+        updatedAt: chat.updatedAt,
+      })),
+    },
+  });
+});
