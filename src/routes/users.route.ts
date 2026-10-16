@@ -1,3 +1,4 @@
+
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../db/prisma";
@@ -55,10 +56,8 @@ usersRouter.get("/me", async (req, res) => {
   }
 
   const plan = getPlan(user.planCode ?? "");
-
-  // Admins have no plan and no limit - reported honestly rather than
-  // pretending they're on some plan.
   const isAdmin = user.role === "ADMIN";
+  const isTrial = plan?.isTrial === true;
 
   res.json({
     ok: true,
@@ -80,12 +79,27 @@ usersRouter.get("/me", async (req, res) => {
         status: isAdmin ? "EXEMPT" : user.planStatus,
         code: user.planCode,
         name: plan?.name ?? null,
-        price: plan ? formatRupees(plan.amountPaise) : null,
-        expiresAt: user.planExpiresAt,
-        questionsUsed: isAdmin ? 0 : user.questionsUsed,
-        questionLimit: isAdmin ? null : (plan?.questionLimit ?? null),
+
+        /**
+         * The trial's usage is deliberately not reported.
+         *
+         * Showing "0 of 30 questions used" turns a free trial into a
+         * countdown, and a student watching a number fall asks fewer
+         * questions - the opposite of what a trial is for. They find
+         * out it has ended when it ends.
+         *
+         * The limit is still enforced on every request; it just isn't
+         * advertised. Price and reset date are hidden for the same
+         * reason - "₹0/month" and a reset ten years away are noise.
+         */
+        isTrial,
+        price: isTrial || !plan ? null : formatRupees(plan.amountPaise),
+        expiresAt: isTrial ? null : user.planExpiresAt,
+        questionsUsed: isAdmin || isTrial ? null : user.questionsUsed,
+        questionLimit:
+          isAdmin || isTrial ? null : (plan?.questionLimit ?? null),
         resetsAt:
-          !isAdmin && plan && user.usagePeriodStart
+          !isAdmin && !isTrial && plan && user.usagePeriodStart
             ? addDays(user.usagePeriodStart, plan.durationDays)
             : null,
       },
@@ -112,14 +126,20 @@ usersRouter.patch("/me", async (req, res) => {
   if (!parsed.success) {
     return res.status(400).json({
       ok: false,
-      error: { code: "BAD_REQUEST", message: parsed.error.issues[0]?.message ?? "Invalid input" },
+      error: {
+        code: "BAD_REQUEST",
+        message: parsed.error.issues[0]?.message ?? "Invalid input",
+      },
     });
   }
 
   if (Object.keys(parsed.data).length === 0) {
     return res.status(400).json({
       ok: false,
-      error: { code: "BAD_REQUEST", message: "Provide at least one field to update" },
+      error: {
+        code: "BAD_REQUEST",
+        message: "Provide at least one field to update",
+      },
     });
   }
 
@@ -142,7 +162,9 @@ usersRouter.patch("/me", async (req, res) => {
         examTrack: user.examTrack,
         schoolName: user.schoolName,
         city: user.city,
-        phone: user.phone,      },
+        phone: user.phone,
+      },
     },
   });
 });
+

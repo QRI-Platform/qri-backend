@@ -7,6 +7,7 @@ import { loginLimiter, registerLimiter } from "../middleware/rate-limits";
 import crypto from "crypto";
 import { sendPasswordResetEmail } from "../lib/email";
 import { env } from "../config/env";
+import { getPlan, TRIAL_PLAN_CODE } from "../config/plans";
 
 export const authRouter = Router();
 
@@ -18,7 +19,6 @@ const registerSchema = z.object({
   password: z.string().min(8),
   grade: z.number().int().min(6).max(12),
   examTrack: z.enum(["NEET", "IIT_JEE", "NDA", "NONE"]).default("NONE"),
-
 });
 
 authRouter.post("/register", registerLimiter, async (req, res) => {
@@ -41,8 +41,32 @@ authRouter.post("/register", registerLimiter, async (req, res) => {
   }
 
   const passwordHash = await hashPassword(password);
+
+  /**
+   * Every new account starts on the free trial, set here rather than
+   * as a schema default: the allowance lives in config/plans.ts, and
+   * duplicating it in the database would mean changing it in two
+   * places.
+   *
+   * usagePeriodStart is recorded for reporting, not for expiry - a
+   * trial runs out by being used up, not by time passing. planExpiresAt
+   * is deliberately left null for the same reason.
+   */
+  const trialPlan = getPlan(TRIAL_PLAN_CODE);
+
   const user = await prisma.user.create({
-    data: { name, email, passwordHash, provider: "CREDENTIALS", grade, examTrack },
+    data: {
+      name,
+      email,
+      passwordHash,
+      provider: "CREDENTIALS",
+      grade,
+      examTrack,
+      planStatus: trialPlan ? "ACTIVE" : "NONE",
+      planCode: trialPlan?.code ?? null,
+      questionsUsed: 0,
+      usagePeriodStart: new Date(),
+    },
   });
 
   const token = signToken({ sub: user.id, email: user.email, role: user.role });
